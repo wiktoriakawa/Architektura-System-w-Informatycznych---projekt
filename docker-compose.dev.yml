@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: te_db_dev
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trendeconomy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secretpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-trendeconomy_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-trendeconomy} -d $${POSTGRES_DB:-trendeconomy_db}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: te_backend_dev
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trendeconomy}:${POSTGRES_PASSWORD:-secretpassword}@db:5432/${POSTGRES_DB:-trendeconomy_db}
+      LOG_LEVEL: DEBUG
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    entrypoint: ["bash", "entrypoint.sh", "--reload"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata_dev:

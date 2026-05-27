@@ -1,0 +1,33 @@
+services:
+  db-test:
+    image: postgres:16-alpine
+    container_name: te_db_test
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+      POSTGRES_DB: test_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  test-runner:
+    build:
+      context: ./backend
+    container_name: te_test_runner
+    environment:
+      DATABASE_URL: postgresql://test_user:test_pass@db-test:5432/test_db
+      LOG_LEVEL: WARNING
+    command: >
+      bash -c "
+        echo '>>> Running migrations...' &&
+        alembic upgrade head &&
+        echo '>>> Seeding test data...' &&
+        python -m app.seed &&
+        echo '>>> Running tests...' &&
+        pytest tests/ -v --cov=app --cov-report=term-missing
+      "
+    depends_on:
+      db-test:
+        condition: service_healthy
