@@ -11,7 +11,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.config import LOG_LEVEL
-from app.routers import countries, indicators, compare
+from app.routers import countries, indicators, compare, ingestion
 
 # ---------------------------------------------------------------------------
 # Konfiguracja logowania strukturalnego
@@ -80,6 +80,7 @@ app.add_middleware(LoggingMiddleware)
 app.include_router(countries.router)
 app.include_router(indicators.router)
 app.include_router(compare.router)
+app.include_router(ingestion.router)
 
 
 # ---------------------------------------------------------------------------

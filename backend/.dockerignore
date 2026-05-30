@@ -1,0 +1,29 @@
+# Cache Pythona — nie kopiujemy do obrazu, kontener generuje swoje.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Wirtualne środowiska
+.venv/
+venv/
+env/
+
+# Pliki dev / IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Lokalne bazy danych SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# Logi
+*.log

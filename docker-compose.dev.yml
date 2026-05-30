@@ -27,7 +27,13 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-    entrypoint: ["bash", "entrypoint.sh", "--reload"]
+    # Skrypt entrypoint.sh w razie OneDrive/Windows może mieć CRLF — uruchamiamy
+    # go z dos2unix w locie, żeby nie wywalał się na "\r": command not found.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        dos2unix -q entrypoint.sh && bash entrypoint.sh --reload
     depends_on:
       db:
         condition: service_healthy
