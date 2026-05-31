@@ -27,6 +27,8 @@ class IngestionTriggerResponse(BaseModel):
     status: str
     indicators_processed: int | None = None
     data_points_upserted: int | None = None
+    observations_received: int | None = None
+    observations_dropped: int | None = None
     errors: list[str] | None = None
 
 
@@ -73,5 +75,7 @@ def trigger_ingestion(
         status="completed",
         indicators_processed=stats.indicators_processed,
         data_points_upserted=stats.data_points_upserted,
+        observations_received=stats.observations_received,
+        observations_dropped=stats.observations_dropped,
         errors=stats.errors,
     )

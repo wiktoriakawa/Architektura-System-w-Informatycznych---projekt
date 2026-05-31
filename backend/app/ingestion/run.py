@@ -28,6 +28,11 @@ from app.ingestion.indicators_config import (
     IndicatorConfig,
 )
 from app.ingestion.worldbank_client import WorldBankClient
+from app.processing import (
+    clean_observations,
+    normalize_eurostat_observations,
+    normalize_worldbank_observations,
+)
 
 logger = structlog.get_logger()
 
@@ -41,6 +46,8 @@ class IngestionStats:
 
     indicators_processed: int = 0
     data_points_upserted: int = 0
+    observations_received: int = 0
+    observations_dropped: int = 0
     errors: list[str] = None
 
     def __post_init__(self) -> None:
@@ -51,6 +58,8 @@ class IngestionStats:
         return {
             "indicators_processed": self.indicators_processed,
             "data_points_upserted": self.data_points_upserted,
+            "observations_received": self.observations_received,
+            "observations_dropped": self.observations_dropped,
             "errors": self.errors,
         }
 
@@ -69,10 +78,9 @@ def _get_or_create_indicator(db: Session, config: IndicatorConfig) -> Indicator:
             source=config.source,
         )
         db.add(indicator)
-        db.flush()  # potrzebne, żeby uzyskać indicator.id
+        db.flush()
         logger.info("indicator_created", code=config.code)
     else:
-        # Synchronizacja nazwy/jednostki, gdyby zmieniły się w konfiguracji.
         indicator.name = config.name
         indicator.unit = config.unit
         indicator.source = config.source
@@ -87,20 +95,8 @@ def _load_country_lookup(db: Session) -> tuple[dict[str, int], dict[str, int]]:
     return iso2_map, iso3_map
 
 
-def _upsert_data_points(
-    db: Session,
-    rows: list[dict],
-) -> int:
-    """
-    Wykonuje upsert (ON CONFLICT ... DO UPDATE) zestawu data_points.
-    Wykorzystuje rozszerzenie dialektu PostgreSQL — pasuje do naszej bazy w Dockerze.
-
-    UWAGA: niektóre datasety Eurostat (np. `une_rt_a`) zwracają wiele obserwacji
-    dla tej samej kombinacji (kraj, rok) — np. dla różnych podzbiorów wiekowych.
-    PostgreSQL nie pozwala wstawić dwóch wierszy z tym samym kluczem konfliktu
-    w jednym `INSERT ... ON CONFLICT` (CardinalityViolation), więc deduplikujemy
-    wiersze trzymając ostatnią wartość dla danego klucza.
-    """
+def _upsert_data_points(db: Session, rows: list[dict]) -> int:
+    """Upsert do data_points z deduplikacją (CardinalityViolation guard)."""
     if not rows:
         return 0
 
@@ -120,7 +116,7 @@ def _upsert_data_points(
 
 
 # ---------------------------------------------------------------------------
-# Funkcje pobierające pojedyncze źródło
+# Pobieranie + przetwarzanie pojedynczego źródła
 # ---------------------------------------------------------------------------
 
 def _ingest_eurostat(
@@ -139,7 +135,19 @@ def _ingest_eurostat(
         for config in indicators:
             try:
                 indicator = _get_or_create_indicator(db, config)
-                observations = client.fetch(config, iso2_codes, year_from, year_to)
+                raw_observations = client.fetch(config, iso2_codes, year_from, year_to)
+                stats.observations_received += len(raw_observations)
+
+                normalised, norm_report = normalize_eurostat_observations(raw_observations)
+                cleaned, clean_report = clean_observations(config.code, normalised)
+                stats.observations_dropped += clean_report.received - clean_report.kept
+                logger.info(
+                    "eurostat_processing_done",
+                    indicator=config.code,
+                    normalization=norm_report.as_dict(),
+                    cleaning=clean_report.as_dict(),
+                )
+
                 rows = [
                     {
                         "country_id": iso2_map[obs.country_iso2],
@@ -147,7 +155,7 @@ def _ingest_eurostat(
                         "year": obs.year,
                         "value": obs.value,
                     }
-                    for obs in observations
+                    for obs in cleaned
                     if obs.country_iso2 in iso2_map
                 ]
                 inserted = _upsert_data_points(db, rows)
@@ -159,7 +167,7 @@ def _ingest_eurostat(
                     indicator=config.code,
                     rows=inserted,
                 )
-            except Exception as e:  # pragma: no cover (logujemy i jedziemy dalej)
+            except Exception as e:
                 db.rollback()
                 stats.errors.append(f"{config.code}: {e}")
                 logger.error(
@@ -185,7 +193,19 @@ def _ingest_worldbank(
         for config in indicators:
             try:
                 indicator = _get_or_create_indicator(db, config)
-                observations = client.fetch(config, iso3_codes, year_from, year_to)
+                raw_observations = client.fetch(config, iso3_codes, year_from, year_to)
+                stats.observations_received += len(raw_observations)
+
+                normalised, norm_report = normalize_worldbank_observations(raw_observations)
+                cleaned, clean_report = clean_observations(config.code, normalised)
+                stats.observations_dropped += clean_report.received - clean_report.kept
+                logger.info(
+                    "worldbank_processing_done",
+                    indicator=config.code,
+                    normalization=norm_report.as_dict(),
+                    cleaning=clean_report.as_dict(),
+                )
+
                 rows = [
                     {
                         "country_id": iso3_map[obs.country_iso3],
@@ -193,7 +213,7 @@ def _ingest_worldbank(
                         "year": obs.year,
                         "value": obs.value,
                     }
-                    for obs in observations
+                    for obs in cleaned
                     if obs.country_iso3 in iso3_map
                 ]
                 inserted = _upsert_data_points(db, rows)
@@ -205,7 +225,7 @@ def _ingest_worldbank(
                     indicator=config.code,
                     rows=inserted,
                 )
-            except Exception as e:  # pragma: no cover
+            except Exception as e:
                 db.rollback()
                 stats.errors.append(f"{config.code}: {e}")
                 logger.error(
@@ -252,7 +272,7 @@ def run_ingestion(
         iso2_map, iso3_map = _load_country_lookup(db)
         if not iso2_map:
             raise RuntimeError(
-                "Brak krajów w bazie. Uruchom najpierw `python -m app.seed`."
+                "Brak krajow w bazie. Uruchom najpierw `python -m app.seed`."
             )
 
         _ingest_eurostat(db, eurostat_selected, iso2_map, year_from, year_to, stats)
@@ -276,7 +296,7 @@ def _parse_args() -> argparse.Namespace:
         "--indicators",
         type=str,
         default=None,
-        help="Kody wskaźników oddzielone przecinkami (domyślnie wszystkie)",
+        help="Kody wskaznikow oddzielone przecinkami (domyslnie wszystkie)",
     )
     return parser.parse_args()
 
