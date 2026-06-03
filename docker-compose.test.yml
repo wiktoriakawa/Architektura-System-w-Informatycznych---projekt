@@ -25,9 +25,20 @@ services:
         alembic upgrade head &&
         echo '>>> Seeding test data...' &&
         python -m app.seed &&
-        echo '>>> Running tests...' &&
-        pytest tests/ -v --cov=app --cov-report=term-missing
+        echo '>>> Running unit tests...' &&
+        pytest tests/ -v --cov=app --cov-report=term-missing &&
+        echo '>>> Starting backend for performance tests...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+        sleep 5 &&
+        echo '>>> Running Locust performance tests...' &&
+        locust -f tests/performance/locustfile.py
+          --headless
+          --host http://localhost:8000
+          --users 10
+          --spawn-rate 2
+          --run-time 30s
       "
     depends_on:
       db-test:
         condition: service_healthy
+
