@@ -1,0 +1,14 @@
+# Nie kopiujemy node_modules — instalujemy je w obrazie z czystego stanu.
+node_modules/
+
+# Bundle generowany w kontenerze, nie powinien przychodzić z hosta.
+dist/
+.vite/
+
+# Logi, cache, pliki edytora
+*.log
+.npm/
+.eslintcache
+.DS_Store
+.vscode/
+.idea/
