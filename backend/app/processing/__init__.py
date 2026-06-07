@@ -1,4 +1,4 @@
-"""Moduł przetwarzania danych — czyszczenie i normalizacja przed zapisem do bazy."""
+"""Moduł przetwarzania danych — czyszczenie i normalizacja."""
 from app.processing.cleaner import (
     CleaningReport,
     ValidationRule,
