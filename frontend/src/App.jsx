@@ -8,16 +8,25 @@ import styles from "./App.module.css";
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 const COUNTRY_COLORS = {
-  PL: "#2563eb", DE: "#16a34a", FR: "#dc2626",
-  IT: "#d97706", ES: "#7c3aed", RO: "#0891b2",
-  NL: "#be185d", BE: "#65a30d", SE: "#0f766e",
-  AT: "#9333ea", HU: "#b45309", CZ: "#1d4ed8",
+  // Wszystkie 27 krajów UE — każdy ma własny kolor.
+  AT: "#9333ea", BE: "#65a30d", BG: "#ea580c", CY: "#0d9488",
+  CZ: "#1d4ed8", DE: "#16a34a", DK: "#c026d3", EE: "#4f46e5",
+  ES: "#7c3aed", FI: "#0284c7", FR: "#dc2626", GR: "#db2777",
+  HR: "#ca8a04", HU: "#b45309", IE: "#15803d", IT: "#d97706",
+  LT: "#7e22ce", LU: "#9a3412", LV: "#0369a1", MT: "#a16207",
+  NL: "#be185d", PL: "#2563eb", PT: "#4d7c0f", RO: "#0891b2",
+  SE: "#0f766e", SI: "#9f1239", SK: "#5b21b6",
 };
 
 const DASH_PATTERNS = {
-  PL: "0", DE: "6 3", FR: "2 2", IT: "8 3 2 3",
-  ES: "4 2", RO: "10 4", NL: "1 1", BE: "6 2 1 2",
-  SE: "3 3", AT: "8 2", HU: "4 1", CZ: "5 5",
+  // Wzory linii cyklicznie — dodatkowo ułatwiają rozróżnienie wielu krajów.
+  AT: "8 2", BE: "6 2 1 2", BG: "4 2", CY: "10 4",
+  CZ: "5 5", DE: "6 3", DK: "2 2", EE: "8 3 2 3",
+  ES: "4 2", FI: "1 1", FR: "2 2", GR: "3 3",
+  HR: "10 4", HU: "4 1", IE: "6 3", IT: "8 3 2 3",
+  LT: "5 5", LU: "8 2", LV: "1 1", MT: "4 1",
+  NL: "1 1", PL: "0", PT: "3 3", RO: "10 4",
+  SE: "3 3", SI: "6 2 1 2", SK: "2 2",
 };
 
 function MetricCard({ country, value, unit, delta }) {
