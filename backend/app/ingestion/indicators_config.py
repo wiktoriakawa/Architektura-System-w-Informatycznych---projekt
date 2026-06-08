@@ -1,4 +1,18 @@
-"""Konfiguracja wskaźników pobieranych z Eurostat i World Bank."""
+"""
+Konfiguracja wskaźników pobieranych z Eurostat i World Bank.
+
+Każdy wpis opisuje:
+  - code      — wewnętrzny kod wskaźnika w naszej bazie (unikalny),
+  - name      — czytelna nazwa,
+  - unit      — jednostka prezentowana w UI,
+  - source    — "eurostat" lub "worldbank",
+  - dataset   — identyfikator źródłowy (Eurostat dataflow lub World Bank indicator),
+  - filters   — dodatkowe wymiary SDMX (tylko Eurostat) zawężające zapytanie
+                do pojedynczej serii czasowej dla każdego kraju.
+
+Konfiguracja jest świadomie krótka — chcemy mieć kilka wskaźników z każdego źródła,
+żeby pokazać warstwę agregacji danych z dwóch niezależnych API (wymaganie projektu).
+"""
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -13,6 +27,10 @@ class IndicatorConfig:
     filters: dict[str, str] = field(default_factory=dict)
 
 
+# ---------------------------------------------------------------------------
+# Wskaźniki Eurostat (SDMX 2.1, format JSON-stat 2.0)
+# Dokumentacja: https://ec.europa.eu/eurostat/web/main/data/web-services
+# ---------------------------------------------------------------------------
 EUROSTAT_INDICATORS: list[IndicatorConfig] = [
     IndicatorConfig(
         code="gdp_per_capita_eur",
@@ -40,6 +58,10 @@ EUROSTAT_INDICATORS: list[IndicatorConfig] = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# Wskaźniki World Bank
+# Dokumentacja: https://datahelpdesk.worldbank.org/knowledgebase/articles/889392
+# ---------------------------------------------------------------------------
 WORLDBANK_INDICATORS: list[IndicatorConfig] = [
     IndicatorConfig(
         code="gdp_per_capita_usd",

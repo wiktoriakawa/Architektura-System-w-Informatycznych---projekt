@@ -38,24 +38,5 @@ services:
       db:
         condition: service_healthy
 
-  frontend:
-    build:
-      context: ./frontend
-      target: dev
-    container_name: te_frontend_dev
-    environment:
-      # W dev kierujemy fetch przeglądarki na backend wystawiony na host,
-      # dzięki temu nie trzeba zmieniać kodu App.jsx (używa VITE_API_URL).
-      VITE_API_URL: http://localhost:8000
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      # Anonimowy wolumen na node_modules — chroni je przed nadpisaniem przez
-      # bind mount z hosta (host nie ma node_modules, a kontener tak).
-      - /app/node_modules
-    depends_on:
-      - backend
-
 volumes:
   pgdata_dev:

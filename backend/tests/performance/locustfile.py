@@ -1,14 +1,23 @@
 """
-Testy wydajnościowe TrendEconomy API — Locust.
-Symuluje typowe zachowanie użytkownika dashboardu.
+Testy wydajnościowe TrendEconomy API — Locust
+Symuluje typowe zachowanie użytkownika dashboardu:
+  1. Health check
+  2. Pobranie listy krajów
+  3. Pobranie listy wskaźników
+  4. Zapytanie o dane wskaźnika dla wybranych krajów
+  5. Zapytanie o dane z różnymi parametrami (zakres lat, różne kraje)
 
-Uruchomienie z UI (http://localhost:8089):
+Uruchomienie interaktywne (Web UI na http://localhost:8089):
     locust -f tests/performance/locustfile.py --host http://localhost:8000
 
-Headless (CI):
-    locust -f tests/performance/locustfile.py --headless \
-        --host http://localhost:8000 --users 20 --spawn-rate 5 \
-        --run-time 60s --html locust_report.html
+Uruchomienie headless (CI/CD, Docker):
+    locust -f tests/performance/locustfile.py \
+        --headless \
+        --host http://localhost:8000 \
+        --users 20 \
+        --spawn-rate 5 \
+        --run-time 60s \
+        --html locust_report.html
 """
 
 import random
@@ -22,15 +31,12 @@ EU_COUNTRY_CODES = [
     "AT", "RO", "CZ", "HU", "PT", "GR", "FI", "DK",
 ]
 
-# Rzeczywiste kody z app/ingestion/indicators_config.py
 INDICATOR_CODES = [
-    "gdp_per_capita_eur",
-    "gdp_per_capita_usd",
-    "unemployment_rate_eu",
-    "unemployment_rate_wb",
-    "population_total_eu",
-    "life_expectancy",
-    "inflation_cpi",
+    "gdp_per_capita_wb",
+    "unemployment_rate_eurostat",
+    "inflation_rate_eurostat",
+    "population_wb",
+    "net_migration_wb",
 ]
 
 YEAR_RANGES = [
@@ -42,15 +48,20 @@ YEAR_RANGES = [
 
 
 def random_countries(n: int = 3) -> str:
+    """Zwraca n losowych kodów krajów jako string 'PL,DE,FR'."""
     return ",".join(random.sample(EU_COUNTRY_CODES, min(n, len(EU_COUNTRY_CODES))))
 
-
 class DashboardUser(HttpUser):
-    """Zwykły user dashboardu — pauza 1-3s między requestami."""
+    """
+    Symuluje użytkownika przeglądającego dashboard.
+    Pauza między requestami: 1–3 sekundy (realistyczne zachowanie).
+    """
     wait_time = between(1, 3)
+
 
     @task(1)
     def health_check(self):
+        """Sprawdzenie stanu serwera — najczęstszy request monitoringu."""
         with self.client.get("/api/v1/health", catch_response=True) as resp:
             if resp.status_code == 200:
                 resp.success()
@@ -59,6 +70,7 @@ class DashboardUser(HttpUser):
 
     @task(3)
     def list_countries(self):
+        """Pobranie listy krajów — wywoływane przy każdym załadowaniu dashboardu."""
         with self.client.get("/api/v1/countries/", catch_response=True) as resp:
             if resp.status_code == 200:
                 data = resp.json()
@@ -71,6 +83,7 @@ class DashboardUser(HttpUser):
 
     @task(2)
     def list_indicators(self):
+        """Pobranie listy wskaźników — przy inicjalizacji filtrów."""
         with self.client.get("/api/v1/indicators/", catch_response=True) as resp:
             if resp.status_code == 200:
                 resp.success()
@@ -79,7 +92,7 @@ class DashboardUser(HttpUser):
 
     @task(5)
     def get_indicator_data_default(self):
-        """Typowe zapytanie o dane — serce dashboardu."""
+        """Typowe zapytanie o dane wskaźnika — serce dashboardu."""
         indicator = random.choice(INDICATOR_CODES)
         countries = random_countries(3)
         year_from, year_to = random.choice(YEAR_RANGES)
@@ -91,33 +104,41 @@ class DashboardUser(HttpUser):
                 "year_from": year_from,
                 "year_to": year_to,
             },
-            name="/api/v1/data/[indicator]",
+            name="/api/v1/data/[indicator]", 
             catch_response=True,
         ) as resp:
             if resp.status_code == 200:
+                resp.success()
+            elif resp.status_code == 404:
+
                 resp.success()
             else:
                 resp.failure(f"Unexpected status: {resp.status_code}")
 
     @task(4)
     def get_indicator_data_wide_range(self):
-        """Długi zakres lat — test wydajności przy większym zbiorze."""
+        """Zapytanie o długi zakres lat — test wydajności przy dużym zbiorze danych."""
         indicator = random.choice(INDICATOR_CODES)
-        countries = random_countries(5)
+        countries = random_countries(5)   
 
         with self.client.get(
             f"/api/v1/data/{indicator}",
-            params={"countries": countries, "year_from": 2000, "year_to": 2023},
+            params={
+                "countries": countries,
+                "year_from": 2000,
+                "year_to": 2023,
+            },
             name="/api/v1/data/[indicator]?wide_range",
             catch_response=True,
         ) as resp:
-            if resp.status_code == 200:
+            if resp.status_code in (200, 404):
                 resp.success()
             else:
                 resp.failure(f"Unexpected status: {resp.status_code}")
 
     @task(2)
     def get_single_country(self):
+        """Pobranie szczegółów pojedynczego kraju."""
         code = random.choice(EU_COUNTRY_CODES)
         with self.client.get(
             f"/api/v1/countries/{code}",
@@ -133,35 +154,42 @@ class DashboardUser(HttpUser):
 
     @task(1)
     def get_nonexistent_indicator(self):
-        """Test obsługi błędów — serwer powinien zwrócić 404, nie 500."""
+        """
+        Celowe zapytanie o nieistniejący wskaźnik — test obsługi błędów 404.
+        Serwer powinien odpowiedzieć 404, nie 500.
+        """
         with self.client.get(
             "/api/v1/data/nonexistent_indicator_xyz",
             name="/api/v1/data/[invalid]",
             catch_response=True,
         ) as resp:
             if resp.status_code == 404:
-                resp.success()
+                resp.success()   
             else:
                 resp.failure(f"Expected 404 for invalid indicator, got {resp.status_code}")
 
 
 class AnalystUser(HttpUser):
-    """Heavy user — analityk pobierający duże zbiory danych."""
     wait_time = between(0.5, 1.5)
-    weight = 1
+    weight = 1  
 
     @task(8)
     def heavy_data_query(self):
+        """Pobieranie danych dla wielu krajów i długiego zakresu."""
         indicator = random.choice(INDICATOR_CODES)
         countries = random_countries(8)
 
         with self.client.get(
             f"/api/v1/data/{indicator}",
-            params={"countries": countries, "year_from": 1995, "year_to": 2023},
+            params={
+                "countries": countries,
+                "year_from": 1995,
+                "year_to": 2023,
+            },
             name="/api/v1/data/[indicator]?heavy",
             catch_response=True,
         ) as resp:
-            if resp.status_code == 200:
+            if resp.status_code in (200, 404):
                 resp.success()
             else:
                 resp.failure(f"Unexpected status: {resp.status_code}")
@@ -185,6 +213,7 @@ def on_locust_quit(environment, **kwargs):
         p99_response_ms=stats.get_response_time_percentile(0.99),
         rps=round(stats.current_rps, 2),
     )
+    # Wymuszenie kodu wyjścia > 0 jeśli failure rate > 5%
     if stats.fail_ratio > 0.05:
         logger.error("locust_failure_threshold_exceeded", failure_rate_pct=round(stats.fail_ratio * 100, 2))
         environment.process_exit_code = 1

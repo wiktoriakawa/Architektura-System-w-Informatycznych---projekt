@@ -1,4 +1,14 @@
-"""Orchestrator akwizycji danych — Eurostat + World Bank → PostgreSQL."""
+"""
+Orchestrator akwizycji danych — pobiera wskaźniki z Eurostat i World Bank,
+zapisuje je w bazie (upsert na (country, indicator, year)).
+
+Uruchomienie ręczne:
+    python -m app.ingestion.run
+    python -m app.ingestion.run --year-from 2010 --year-to 2024
+    python -m app.ingestion.run --indicators gdp_per_capita_usd,life_expectancy
+
+Endpoint API (POST /api/v1/ingestion/trigger) wywołuje funkcję `run_ingestion`.
+"""
 from __future__ import annotations
 
 import argparse
@@ -32,6 +42,8 @@ DEFAULT_YEAR_TO = 2024
 
 @dataclass
 class IngestionStats:
+    """Podsumowanie pojedynczego uruchomienia ingestion."""
+
     indicators_processed: int = 0
     data_points_upserted: int = 0
     observations_received: int = 0
@@ -51,6 +63,10 @@ class IngestionStats:
             "errors": self.errors,
         }
 
+
+# ---------------------------------------------------------------------------
+# Pomocnicze operacje na bazie
+# ---------------------------------------------------------------------------
 
 def _get_or_create_indicator(db: Session, config: IndicatorConfig) -> Indicator:
     indicator = db.query(Indicator).filter(Indicator.code == config.code).first()
@@ -72,6 +88,7 @@ def _get_or_create_indicator(db: Session, config: IndicatorConfig) -> Indicator:
 
 
 def _load_country_lookup(db: Session) -> tuple[dict[str, int], dict[str, int]]:
+    """Zwraca dwie mapy: ISO2 -> country_id oraz ISO3 -> country_id."""
     countries = db.query(Country).all()
     iso2_map = {c.code_iso2: c.id for c in countries}
     iso3_map = {c.code_iso3: c.id for c in countries}
@@ -79,7 +96,7 @@ def _load_country_lookup(db: Session) -> tuple[dict[str, int], dict[str, int]]:
 
 
 def _upsert_data_points(db: Session, rows: list[dict]) -> int:
-    """Upsert do data_points z deduplikacją po (country, indicator, year)."""
+    """Upsert do data_points z deduplikacją (CardinalityViolation guard)."""
     if not rows:
         return 0
 
@@ -98,6 +115,10 @@ def _upsert_data_points(db: Session, rows: list[dict]) -> int:
     return result.rowcount or len(unique_rows)
 
 
+# ---------------------------------------------------------------------------
+# Pobieranie + przetwarzanie pojedynczego źródła
+# ---------------------------------------------------------------------------
+
 def _ingest_eurostat(
     db: Session,
     indicators: list[IndicatorConfig],
@@ -114,10 +135,10 @@ def _ingest_eurostat(
         for config in indicators:
             try:
                 indicator = _get_or_create_indicator(db, config)
-                raw = client.fetch(config, iso2_codes, year_from, year_to)
-                stats.observations_received += len(raw)
+                raw_observations = client.fetch(config, iso2_codes, year_from, year_to)
+                stats.observations_received += len(raw_observations)
 
-                normalised, norm_report = normalize_eurostat_observations(raw)
+                normalised, norm_report = normalize_eurostat_observations(raw_observations)
                 cleaned, clean_report = clean_observations(config.code, normalised)
                 stats.observations_dropped += clean_report.received - clean_report.kept
                 logger.info(
@@ -172,10 +193,10 @@ def _ingest_worldbank(
         for config in indicators:
             try:
                 indicator = _get_or_create_indicator(db, config)
-                raw = client.fetch(config, iso3_codes, year_from, year_to)
-                stats.observations_received += len(raw)
+                raw_observations = client.fetch(config, iso3_codes, year_from, year_to)
+                stats.observations_received += len(raw_observations)
 
-                normalised, norm_report = normalize_worldbank_observations(raw)
+                normalised, norm_report = normalize_worldbank_observations(raw_observations)
                 cleaned, clean_report = clean_observations(config.code, normalised)
                 stats.observations_dropped += clean_report.received - clean_report.kept
                 logger.info(
@@ -214,11 +235,16 @@ def _ingest_worldbank(
                 )
 
 
+# ---------------------------------------------------------------------------
+# Publiczny punkt wejścia
+# ---------------------------------------------------------------------------
+
 def run_ingestion(
     year_from: int = DEFAULT_YEAR_FROM,
     year_to: int = DEFAULT_YEAR_TO,
     indicator_codes: list[str] | None = None,
 ) -> IngestionStats:
+    """Pobiera dane dla wybranych wskaźników i zapisuje je w bazie."""
     if year_from > year_to:
         raise ValueError("year_from must be <= year_to")
 
@@ -245,7 +271,9 @@ def run_ingestion(
     try:
         iso2_map, iso3_map = _load_country_lookup(db)
         if not iso2_map:
-            raise RuntimeError("Brak krajow w bazie. Uruchom najpierw `python -m app.seed`.")
+            raise RuntimeError(
+                "Brak krajow w bazie. Uruchom najpierw `python -m app.seed`."
+            )
 
         _ingest_eurostat(db, eurostat_selected, iso2_map, year_from, year_to, stats)
         _ingest_worldbank(db, worldbank_selected, iso3_map, year_from, year_to, stats)
@@ -256,11 +284,20 @@ def run_ingestion(
     return stats
 
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run TrendEconomy data ingestion")
     parser.add_argument("--year-from", type=int, default=DEFAULT_YEAR_FROM)
     parser.add_argument("--year-to", type=int, default=DEFAULT_YEAR_TO)
-    parser.add_argument("--indicators", type=str, default=None)
+    parser.add_argument(
+        "--indicators",
+        type=str,
+        default=None,
+        help="Kody wskaznikow oddzielone przecinkami (domyslnie wszystkie)",
+    )
     return parser.parse_args()
 
 

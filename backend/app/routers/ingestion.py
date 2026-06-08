@@ -19,7 +19,7 @@ class IngestionTriggerRequest(BaseModel):
     )
     run_in_background: bool = Field(
         default=True,
-        description="Jeśli True, ingestion uruchamia się asynchronicznie.",
+        description="Jeśli True, ingestion uruchamia się asynchronicznie i endpoint odpowiada od razu.",
     )
 
 

@@ -1,12 +1,28 @@
-"""Czyszczenie obserwacji — walidacja zakresów + wykrywanie outlierów IQR."""
+"""
+Moduł czyszczenia danych — walidacja zakresów + wykrywanie outlierów.
+
+Cel:
+  - Odrzucenie obserwacji niemożliwych z natury wskaźnika (np. bezrobocie > 100%,
+    ujemna populacja, ujemna długość życia).
+  - Wykrywanie statystycznych outlierów dla każdej serii czasowej (kraj × wskaźnik)
+    metodą rozstępu międzykwartylowego (IQR).
+
+Cleaner zwraca:
+  - listę "czystych" obserwacji do dalszego przetwarzania,
+  - obiekt `CleaningReport` z licznikami odrzuceń per powód.
+
+Wszystkie reguły są jawnie skonfigurowane w `VALIDATION_RULES` (dict keyowany
+kodem wskaźnika) — łatwo audytować i rozszerzać.
+"""
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Iterable, Protocol
 
 
+# Wspólny "kształt" obserwacji z obu źródeł (Eurostat / WorldBank) — używamy
+# Protocol, żeby nie wprowadzać sztywnej zależności na konkretną klasę.
 class _ObservationLike(Protocol):
     year: int
     value: float
@@ -14,28 +30,67 @@ class _ObservationLike(Protocol):
 
 @dataclass(frozen=True)
 class ValidationRule:
+    """Pojedyncza reguła walidacji wartości wskaźnika."""
+
     min_value: float | None = None
     max_value: float | None = None
     description: str = ""
 
 
-# Reguły domenowe — wartości spoza zakresu są fizycznie niemożliwe.
+# ---------------------------------------------------------------------------
+# Reguły domenowe — pochodzą z natury każdego wskaźnika.
+# Wartości spoza zakresu odrzucamy, bo są fizycznie niemożliwe lub świadczą
+# o błędzie w źródłowych danych.
+# ---------------------------------------------------------------------------
 VALIDATION_RULES: dict[str, ValidationRule] = {
-    "gdp_per_capita_eur": ValidationRule(0, 500_000, "PKB per capita EUR"),
-    "gdp_per_capita_usd": ValidationRule(0, 500_000, "PKB per capita USD"),
-    "unemployment_rate_eu": ValidationRule(0, 100, "Stopa bezrobocia %"),
-    "unemployment_rate_wb": ValidationRule(0, 100, "Stopa bezrobocia %"),
-    "population_total_eu": ValidationRule(0, 200_000_000, "Populacja kraju UE"),
-    "life_expectancy": ValidationRule(30, 120, "Długość życia w latach"),
-    "inflation_cpi": ValidationRule(-50, 10_000, "Inflacja CPI %"),
+    "gdp_per_capita_eur": ValidationRule(
+        min_value=0,
+        max_value=500_000,
+        description="PKB per capita w EUR — realnie 0–500k.",
+    ),
+    "gdp_per_capita_usd": ValidationRule(
+        min_value=0,
+        max_value=500_000,
+        description="PKB per capita w USD — realnie 0–500k.",
+    ),
+    "unemployment_rate_eu": ValidationRule(
+        min_value=0,
+        max_value=100,
+        description="Stopa bezrobocia w % — z definicji 0–100.",
+    ),
+    "unemployment_rate_wb": ValidationRule(
+        min_value=0,
+        max_value=100,
+        description="Stopa bezrobocia w % — z definicji 0–100.",
+    ),
+    "population_total_eu": ValidationRule(
+        min_value=0,
+        max_value=200_000_000,
+        description="Populacja kraju UE — żaden kraj nie przekroczy 200 mln.",
+    ),
+    "life_expectancy": ValidationRule(
+        min_value=30,
+        max_value=120,
+        description="Oczekiwana długość życia — realnie 30–120 lat.",
+    ),
+    "inflation_cpi": ValidationRule(
+        min_value=-50,
+        max_value=10_000,
+        description="Inflacja CPI rok do roku — od deflacji do hiperinflacji.",
+    ),
 }
 
-# Konserwatywny próg IQR — k=1.5 byłoby zbyt agresywne dla krótkich serii.
+
+# Próg IQR — punkt jest outlierem, gdy leży poza [Q1 - K*IQR, Q3 + K*IQR].
+# Wartość 3.0 jest konserwatywna (większa = mniej odrzuceń); klasyczne 1.5
+# byłoby zbyt agresywne dla krótkich serii czasowych ekonomicznych.
 IQR_K = 3.0
 
 
 @dataclass
 class CleaningReport:
+    """Statystyki czyszczenia jednego batcha obserwacji."""
+
     received: int = 0
     kept: int = 0
     dropped_invalid_value: int = 0
@@ -55,6 +110,7 @@ class CleaningReport:
 
 
 def _percentile(sorted_values: list[float], pct: float) -> float:
+    """Liniowa interpolacja percentyla (jak numpy.percentile, ale bez numpy)."""
     if not sorted_values:
         raise ValueError("Cannot compute percentile of empty list")
     if len(sorted_values) == 1:
@@ -68,7 +124,10 @@ def _percentile(sorted_values: list[float], pct: float) -> float:
 
 
 def _detect_iqr_outliers(values: list[float], k: float = IQR_K) -> set[int]:
-    # Serie < 5 punktów — IQR nie ma sensu statystycznego.
+    """Zwraca indeksy wartości, które są outlierami wg metody IQR.
+
+    Dla serii < 5 punktów IQR nie ma sensu statystycznego — nie wykrywamy outlierów.
+    """
     if len(values) < 5:
         return set()
     sorted_vals = sorted(values)
@@ -86,12 +145,23 @@ def clean_observations(
     indicator_code: str,
     observations: Iterable[_ObservationLike],
 ) -> tuple[list, CleaningReport]:
-    """Trzy etapy: odrzucenie nieprawidłowych → walidacja zakresu → outliery IQR per kraj."""
+    """
+    Czyści obserwacje dla pojedynczego wskaźnika.
+
+    Etapy:
+      1. Odrzuca obserwacje z `None`, `NaN`, `inf` (dane uszkodzone).
+      2. Odrzuca obserwacje poza zakresem domenowym (`VALIDATION_RULES`).
+      3. Wykrywa outliery IQR per kraj (jeśli obserwacje mają atrybut country_iso2/iso3).
+
+    Zwraca: (lista_czystych_obserwacji, raport).
+    """
+    import math
+
     obs_list = list(observations)
     report = CleaningReport(received=len(obs_list))
     rule = VALIDATION_RULES.get(indicator_code)
 
-    # 1. None / NaN / inf
+    # ---- Etap 1: odrzucenie wartości nieprawidłowych (None, NaN, inf) ----
     valid: list = []
     for obs in obs_list:
         v = obs.value
@@ -101,7 +171,7 @@ def clean_observations(
             continue
         valid.append(obs)
 
-    # 2. Zakres domenowy
+    # ---- Etap 2: walidacja zakresu domenowego ----
     in_range: list = []
     for obs in valid:
         if rule is not None:
@@ -115,7 +185,8 @@ def clean_observations(
                 continue
         in_range.append(obs)
 
-    # 3. IQR per kraj
+    # ---- Etap 3: IQR per kraj (jeśli obserwacje mają identyfikator kraju) ----
+    # Grupujemy po dowolnym atrybucie kraju, który obserwacja udostępnia.
     def _country_key(obs) -> str:
         return getattr(obs, "country_iso2", None) or getattr(obs, "country_iso3", "")
 

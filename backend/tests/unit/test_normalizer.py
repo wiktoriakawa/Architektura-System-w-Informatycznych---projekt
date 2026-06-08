@@ -1,11 +1,14 @@
-"""Testy normalizatora."""
+"""Testy jednostkowe normalizatora."""
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import pytest
 
 from app.ingestion.eurostat_client import EurostatObservation
 from app.ingestion.worldbank_client import WorldBankObservation
 from app.processing.normalizer import (
+    EUROSTAT_TO_ISO2,
     ISO2_TO_ISO3,
     ISO3_TO_ISO2,
     iso2_to_iso3,
@@ -15,6 +18,10 @@ from app.processing.normalizer import (
     normalize_worldbank_observations,
 )
 
+
+# ---------------------------------------------------------------------------
+# Normalizacja kodów krajów
+# ---------------------------------------------------------------------------
 
 def test_normalize_iso2_passthrough():
     assert normalize_country_code_iso2("PL") == "PL"
@@ -44,6 +51,7 @@ def test_normalize_unknown_raises():
 
 
 def test_iso2_iso3_bidirectional_mapping_is_consistent():
+    """Mapy ISO2↔ISO3 muszą być symetryczne."""
     for iso3, iso2 in ISO3_TO_ISO2.items():
         assert ISO2_TO_ISO3[iso2] == iso3
 
@@ -59,6 +67,7 @@ def test_iso2_to_iso3_unknown_raises():
 
 
 def test_all_27_eu_countries_in_iso_maps():
+    """Mapy muszą zawierać wszystkie 27 krajów UE z seeda bazy."""
     expected = {
         "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI",
         "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT",
@@ -67,11 +76,19 @@ def test_all_27_eu_countries_in_iso_maps():
     assert set(ISO2_TO_ISO3.keys()) == expected
 
 
+# ---------------------------------------------------------------------------
+# Normalizacja wartości liczbowych
+# ---------------------------------------------------------------------------
+
 def test_normalize_value_rounds_to_four_decimals():
     assert normalize_value(3.14159265) == 3.1416
     assert normalize_value(1.0) == 1.0
     assert normalize_value(1.23456789, precision=2) == 1.23
 
+
+# ---------------------------------------------------------------------------
+# Normalizacja batchy obserwacji
+# ---------------------------------------------------------------------------
 
 def test_normalize_eurostat_maps_el_to_gr():
     obs = [
@@ -83,6 +100,7 @@ def test_normalize_eurostat_maps_el_to_gr():
     assert "GR" in codes
     assert "EL" not in codes
     assert report.country_codes_normalized == 1
+    # Wartość greckiego PKB powinna być zaokrąglona do 4 miejsc.
     gr_obs = next(o for o in out if o.country_iso2 == "GR")
     assert gr_obs.value == 19_000.1235
 

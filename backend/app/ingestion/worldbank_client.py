@@ -1,4 +1,19 @@
-"""Klient World Bank Open Data API (v2)."""
+"""
+Klient World Bank Open Data API (v2).
+
+Dokumentacja: https://datahelpdesk.worldbank.org/knowledgebase/articles/889392
+Endpoint:
+  https://api.worldbank.org/v2/country/<ISO3;ISO3;...>/indicator/<CODE>?format=json&date=<from>:<to>&per_page=...
+
+Odpowiedź ma postać:
+  [
+    { "page": 1, "pages": 1, "per_page": 20000, "total": 540, ... },
+    [
+      { "countryiso3code": "POL", "date": "2023", "value": 22345.6, ... },
+      ...
+    ]
+  ]
+"""
 from __future__ import annotations
 
 import time
@@ -21,13 +36,15 @@ RETRY_BACKOFF_SEC = 2.0
 
 @dataclass(frozen=True)
 class WorldBankObservation:
+    """Pojedyncza obserwacja zwracana przez World Bank API."""
+
     country_iso3: str
     year: int
     value: float
 
 
 class WorldBankClient:
-    """Synchroniczny klient World Banku oparty na httpx."""
+    """Synchroniczny klient World Bank API oparty na httpx."""
 
     def __init__(
         self,
@@ -40,6 +57,8 @@ class WorldBankClient:
         self._client = client or httpx.Client(timeout=timeout)
         self._owns_client = client is None
 
+    # ------------------------------------------------------------------ API
+
     def fetch(
         self,
         indicator: IndicatorConfig,
@@ -47,6 +66,7 @@ class WorldBankClient:
         year_from: int,
         year_to: int,
     ) -> list[WorldBankObservation]:
+        """Pobiera obserwacje dla wskaźnika, listy krajów (ISO3) i zakresu lat."""
         if indicator.source != "worldbank":
             raise ValueError(f"Indicator {indicator.code} is not a World Bank indicator")
 
@@ -54,9 +74,11 @@ class WorldBankClient:
         if not countries_list:
             return []
 
-        # WB przyjmuje wiele krajów oddzielonych średnikami.
+        # World Bank przyjmuje wiele krajów oddzielonych średnikami.
         countries_path = ";".join(countries_list)
-        url = f"{self.base_url}/country/{countries_path}/indicator/{indicator.dataset}"
+        url = (
+            f"{self.base_url}/country/{countries_path}/indicator/{indicator.dataset}"
+        )
         params = {
             "format": "json",
             "date": f"{year_from}:{year_to}",
@@ -73,6 +95,7 @@ class WorldBankClient:
         )
 
         payload = self._get_with_retry(url, params, indicator.code)
+
         observations = self._parse_response(payload)
         logger.info(
             "worldbank_response_parsed",
@@ -82,6 +105,7 @@ class WorldBankClient:
         return observations
 
     def _get_with_retry(self, url: str, params, indicator_code: str) -> dict:
+        """Retry na błędach sieciowych (timeout, network unreachable, 5xx)."""
         last_error: Exception | None = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -115,13 +139,21 @@ class WorldBankClient:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    # ---------------------------------------------------------------- parser
+
     @staticmethod
     def _parse_response(payload) -> list[WorldBankObservation]:
-        """WB zwraca [meta, records]. Wyciągamy rekordy z wartościami != null."""
+        """
+        Wyciąga obserwacje z odpowiedzi World Bank API.
+
+        Format: lista dwuelementowa [metadane, rekordy].
+        Jeśli zapytanie zwraca błąd, payload to lista [ { "message": [...] } ].
+        """
         if not isinstance(payload, list):
             raise ValueError("Unexpected World Bank response shape (not a list)")
 
         if len(payload) < 2 or not isinstance(payload[1], list):
+            # Sytuacja błędu — payload[0] zawiera komunikat.
             message = payload[0] if payload else {}
             raise ValueError(f"World Bank API returned no data: {message}")
 

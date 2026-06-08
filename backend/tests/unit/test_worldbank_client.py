@@ -1,4 +1,4 @@
-"""Testy klienta World Bank z mockowanym httpx."""
+"""Testy jednostkowe klienta World Bank API — mockujemy httpx."""
 from __future__ import annotations
 
 import httpx
@@ -7,15 +7,18 @@ import pytest
 from app.ingestion.indicators_config import EUROSTAT_INDICATORS, WORLDBANK_INDICATORS
 from app.ingestion.worldbank_client import WorldBankClient, WorldBankObservation
 
-
 SAMPLE_PAYLOAD = [
     {
-        "page": 1, "pages": 1, "per_page": 20000, "total": 4,
-        "sourceid": "2", "lastupdated": "2024-01-30",
+        "page": 1,
+        "pages": 1,
+        "per_page": 20000,
+        "total": 4,
+        "sourceid": "2",
+        "lastupdated": "2024-01-30",
     },
     [
         {
-            "indicator": {"id": "NY.GDP.PCAP.CD", "value": "GDP per capita"},
+            "indicator": {"id": "NY.GDP.PCAP.CD", "value": "GDP per capita (current US$)"},
             "country": {"id": "PL", "value": "Poland"},
             "countryiso3code": "POL",
             "date": "2023",
@@ -23,7 +26,7 @@ SAMPLE_PAYLOAD = [
             "decimal": 1,
         },
         {
-            "indicator": {"id": "NY.GDP.PCAP.CD", "value": "GDP per capita"},
+            "indicator": {"id": "NY.GDP.PCAP.CD", "value": "GDP per capita (current US$)"},
             "country": {"id": "DE", "value": "Germany"},
             "countryiso3code": "DEU",
             "date": "2023",
@@ -31,18 +34,22 @@ SAMPLE_PAYLOAD = [
             "decimal": 1,
         },
         {
+            # Brakująca wartość — World Bank nie wymusza pełnego pokrycia lat.
             "indicator": {"id": "NY.GDP.PCAP.CD"},
             "country": {"id": "PL"},
             "countryiso3code": "POL",
             "date": "2022",
             "value": None,
+            "decimal": 1,
         },
         {
+            # Niepoprawny rok — pomijamy.
             "indicator": {"id": "NY.GDP.PCAP.CD"},
             "country": {"id": "PL"},
             "countryiso3code": "POL",
             "date": "NA",
             "value": 100.0,
+            "decimal": 1,
         },
     ],
 ]
@@ -53,7 +60,8 @@ def _build_client(payload) -> WorldBankClient:
         return httpx.Response(200, json=payload)
 
     transport = httpx.MockTransport(handler)
-    return WorldBankClient(client=httpx.Client(transport=transport))
+    http_client = httpx.Client(transport=transport)
+    return WorldBankClient(client=http_client)
 
 
 def test_fetch_parses_observations():
@@ -85,7 +93,11 @@ def test_fetch_rejects_wrong_source():
 
 def test_error_payload_raises():
     error_payload = [
-        {"message": [{"id": "120", "key": "Invalid value", "value": "Invalid country"}]}
+        {
+            "message": [
+                {"id": "120", "key": "Invalid value", "value": "The provided country is invalid"}
+            ]
+        }
     ]
     client = _build_client(error_payload)
     with pytest.raises(ValueError):

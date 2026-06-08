@@ -9,7 +9,7 @@ services:
     volumes:
       - pgdata_prod:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -31,15 +31,11 @@ services:
   frontend:
     build:
       context: ./frontend
-      # Stage `prod` z Dockerfile = nginx alpine z gotowym bundle Vite.
-      target: prod
     container_name: te_frontend_prod
     depends_on:
       - backend
     restart: always
 
-  # Edge proxy — jedyny kontener wystawiony na port 80 hosta.
-  # Przekierowuje / na frontend (nginx ze statykami) i /api/* na backend.
   nginx:
     image: nginx:alpine
     container_name: te_nginx_prod
