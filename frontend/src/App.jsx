@@ -208,7 +208,7 @@ export default function App() {
           <div className={styles.controlGroup}>
             <label className={styles.controlLabel}>Kraje</label>
             <div className={styles.countryGrid}>
-              {countries.slice(0, 12).map((c) => (
+              {countries.filter((c) => COUNTRY_COLORS[c.code_iso2]).map((c) => (
                 <button
                   key={c.code_iso2}
                   className={`${styles.countryBtn} ${selectedCountries.includes(c.code_iso2) ? styles.countryBtnActive : ""}`}

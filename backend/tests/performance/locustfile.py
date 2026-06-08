@@ -32,11 +32,13 @@ EU_COUNTRY_CODES = [
 ]
 
 INDICATOR_CODES = [
-    "gdp_per_capita_wb",
-    "unemployment_rate_eurostat",
-    "inflation_rate_eurostat",
-    "population_wb",
-    "net_migration_wb",
+    "gdp_per_capita_usd",
+    "gdp_per_capita_eur",
+    "unemployment_rate_eu",
+    "unemployment_rate_wb",
+    "inflation_cpi",
+    "population_total_eu",
+    "life_expectancy",
 ]
 
 YEAR_RANGES = [
